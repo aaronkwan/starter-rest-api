@@ -5,6 +5,8 @@ const db = require('@cyclic.sh/dynamodb')
 app.use(express.json())
 app.use(express.urlencoded({ extended: true }))
 
+const col = "leaderboard";
+
 // #############################################################################
 // This configures static hosting for files in /public that have the extensions
 // listed in the array.
@@ -19,45 +21,74 @@ app.use(express.urlencoded({ extended: true }))
 // app.use(express.static('public', options))
 // #############################################################################
 
-// Create or Update an item
-app.post('/:col/:key', async (req, res) => {
-  console.log(req.body)
+// Submit a score to the leaderboard (store duplicates), return the top 10:
+app.post('/submit/:score?', async (req, res) => {
+  const score = req.params.score;
+  console.log(`from collection: ${col} update key: ${score} with params ${JSON.stringify(req.params)}`)
+  const leaderboard = db.collection(col);
 
-  const col = req.params.col
-  const key = req.params.key
-  console.log(`from collection: ${col} delete key: ${key} with params ${JSON.stringify(req.params)}`)
-  const item = await db.collection(col).set(key, req.body)
-  console.log(JSON.stringify(item, null, 2))
+  if (score) {
+    // Update score's count:
+    let item = await leaderboard.get(score);
+    if (item == null) {
+      item = await leaderboard.set(score, { count: 1 });
+    }
+    else {
+      console.log(JSON.stringify(item, null, 2));
+      item = await leaderboard.set(score, { count: (item.props.count + 1) });
+    }
+  }
+  // Return top ten scores:
+  const items = await leaderboard.list();
+  const scores = items.results.map(item => (parseInt(item.key)));
+  scores.sort((a, b) => b - a);
+  scores.splice(10);
+  console.log(JSON.stringify(scores, null, 2));
+  res.json({ scores: scores }).end();
+})
+
+// Delete a score or all scores:
+app.delete('/delete/:score?', async (req, res) => {
+  const score = req.params.score;
+  let leaderboard = db.collection(col);
+
+  // Delete all scores:
+  if (!score) {
+    console.log(`from collection: ${col} delete all items with params ${JSON.stringify(req.params)}`)
+    const items = await leaderboard.list();
+    for (const item of items.results) {
+      await leaderboard.delete(item.key);
+    }
+    res.json(items).end();
+    return;
+  }
+
+  // Delete a single score:
+  console.log(`from collection: ${col} delete key: ${score} with params ${JSON.stringify(req.params)}`)
+  const item = await leaderboard.delete(score);
   res.json(item).end()
 })
 
-// Delete an item
-app.delete('/:col/:key', async (req, res) => {
-  const col = req.params.col
-  const key = req.params.key
-  console.log(`from collection: ${col} delete key: ${key} with params ${JSON.stringify(req.params)}`)
-  const item = await db.collection(col).delete(key)
-  console.log(JSON.stringify(item, null, 2))
-  res.json(item).end()
-})
 
-// Get a single item
-app.get('/:col/:key', async (req, res) => {
-  const col = req.params.col
-  const key = req.params.key
-  console.log(`from collection: ${col} get key: ${key} with params ${JSON.stringify(req.params)}`)
-  const item = await db.collection(col).get(key)
-  console.log(JSON.stringify(item, null, 2))
-  res.json(item).end()
-})
+// Get a score or all scores:
+app.get('/:score', async (req, res) => {
+  const key = req.params.score;
+  let leaderboard = db.collection(col);
 
-// Get a full listing
-app.get('/:col', async (req, res) => {
-  const col = req.params.col
-  console.log(`list collection: ${col} with params: ${JSON.stringify(req.params)}`)
-  const items = await db.collection(col).list()
-  console.log(JSON.stringify(items, null, 2))
-  res.json(items).end()
+  // Get all scores:
+  if (key == "") {
+    console.log(`from collection: ${col} get all items with params ${JSON.stringify(req.params)}`)
+    const items = await leaderboard.list();
+    console.log(JSON.stringify(items, null, 2))
+    res.json(items).end();
+    return;
+  }
+
+  // Get a single score:
+  console.log(`from collection: ${col} get key: ${score} with params ${JSON.stringify(req.params)}`)
+  const item = await leaderboard.get(score);
+  console.log(JSON.stringify(item, null, 2));
+  res.json(item).end();
 })
 
 // Catch all handler for all other request.
